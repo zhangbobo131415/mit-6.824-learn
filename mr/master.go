@@ -1,14 +1,15 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-import "strconv"
-import "sync"
-import "time"
-
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"strconv"
+	"sync"
+	"time"
+)
 
 // tasks' status
 // UnAllocated    ---->     UnMaped
@@ -20,30 +21,31 @@ const (
 	Finished
 )
 
-var maptasks chan string          // chan for map task
-var reducetasks chan int          // chan for reduce task
+var maptasks chan string // chan for map task
+var reducetasks chan int // chan for reduce task
 
 // Master struct
 type Master struct {
 	// Your definitions here.
-	AllFilesName        map[string]int
-	MapTaskNumCount     int
-	NReduce             int               // n reduce task
-	InterFIlename       [][]string        // intermediate file
-	MapFinished         bool
-	ReduceTaskStatus    map[int]int      // about reduce tasks' status
-	ReduceFinished      bool              // Finish the reduce task
-	RWLock              *sync.RWMutex
+	AllFilesName     map[string]int
+	MapTaskNumCount  int
+	NReduce          int        // n reduce task
+	InterFIlename    [][]string // intermediate file
+	MapFinished      bool
+	ReduceTaskStatus map[int]int // about reduce tasks' status
+	ReduceFinished   bool        // Finish the reduce task
+	RWLock           *sync.RWMutex
+	MutexLock        *sync.Mutex
 }
 
 // MyCallHandler func
 // Your code here -- RPC handlers for the worker to call.
 func (m *Master) MyCallHandler(args *MyArgs, reply *MyReply) error {
 	msgType := args.MessageType
-	switch(msgType) {
+	switch msgType {
 	case MsgForTask:
 		select {
-		case filename := <- maptasks:
+		case filename := <-maptasks:
 			// allocate map task
 			reply.Filename = filename
 			reply.MapNumAllocated = m.MapTaskNumCount
@@ -54,20 +56,22 @@ func (m *Master) MyCallHandler(args *MyArgs, reply *MyReply) error {
 			m.AllFilesName[filename] = Allocated
 			m.MapTaskNumCount++
 			m.RWLock.Unlock()
-			go m.timerForWorker("map",filename)
+			go m.timerForWorker("map", filename)
+			///fmt.Printf("resply%+v\n", reply)
 			return nil
 
-		case reduceNum := <- reducetasks:
+		case reduceNum := <-reducetasks:
 			// allocate reduce task
 			reply.TaskType = "reduce"
 			reply.ReduceFileList = m.InterFIlename[reduceNum]
 			reply.NReduce = m.NReduce
 			reply.ReduceNumAllocated = reduceNum
-			
+
 			m.RWLock.Lock()
 			m.ReduceTaskStatus[reduceNum] = Allocated
 			m.RWLock.Unlock()
 			go m.timerForWorker("reduce", strconv.Itoa(reduceNum))
+			//fmt.Printf("resply%+v\n", reply)
 			return nil
 		}
 	case MsgForFinishMap:
@@ -84,60 +88,111 @@ func (m *Master) MyCallHandler(args *MyArgs, reply *MyReply) error {
 }
 
 // timerForWorker : monitor the worker
-func (m *Master)timerForWorker(taskType, identify string) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if taskType == "map" {
-				m.RWLock.Lock()
-				m.AllFilesName[identify] = UnAllocated
-				m.RWLock.Unlock()
-				maptasks <- identify
-			} else if taskType == "reduce" {
-				index, _ := strconv.Atoi(identify)
-				m.RWLock.Lock()
-				m.ReduceTaskStatus[index] = UnAllocated
-				m.RWLock.Unlock()
-				reducetasks <- index
-			}
-			return
-		default:
-			if taskType == "map" {
-				m.RWLock.RLock()
-				if m.AllFilesName[identify] == Finished {
-					m.RWLock.RUnlock()
-					return
-				} else {
-					m.RWLock.RUnlock()
-				}
-			} else if taskType == "reduce" {
-				index, _ := strconv.Atoi(identify)
-				m.RWLock.RLock()
-				if m.ReduceTaskStatus[index] == Finished {
-					m.RWLock.RUnlock()
-					return
-				} else {
-					m.RWLock.RUnlock()
-				}
-			}
+
+func (m *Master) timerForWorker(taskType, identify string) {
+	time.Sleep(10 * time.Second)
+	if taskType == "map" {
+		m.RWLock.RLock()
+		if m.AllFilesName[identify] == Finished {
+			m.RWLock.RUnlock()
+		} else {
+			m.RWLock.RUnlock()
+			m.RWLock.Lock()
+			m.AllFilesName[identify] = UnAllocated
+			m.RWLock.Unlock()
+			maptasks <- identify
+		}
+	} else if taskType == "reduce" {
+		index, _ := strconv.Atoi(identify)
+		m.RWLock.RLock()
+		if m.ReduceTaskStatus[index] == Finished {
+			m.RWLock.RUnlock()
+		} else {
+			m.RWLock.RUnlock()
+			m.RWLock.Lock()
+			m.ReduceTaskStatus[index] = UnAllocated
+			m.RWLock.Unlock()
+			reducetasks <- index
 		}
 	}
+
 }
 
+// func (m *Master) timerForWorker(taskType, identify string) {
+// 	time.Sleep(10 * time.Second)
+// 	if taskType == "map" {
+// 		m.MutexLock.Lock()
+// 		if m.AllFilesName[identify] == Finished {
+// 			m.MutexLock.Unlock()
+// 		} else {
+// 			m.AllFilesName[identify] = UnAllocated
+// 			m.MutexLock.Unlock()
+// 			maptasks <- identify
+// 		}
+// 	} else if taskType == "reduce" {
+// 		index, _ := strconv.Atoi(identify)
+// 		m.MutexLock.Lock()
+// 		if m.ReduceTaskStatus[index] == Finished {
+// 			m.MutexLock.Unlock()
+// 		} else {
+// 			m.ReduceTaskStatus[index] = UnAllocated
+// 			m.MutexLock.Unlock()
+// 			reducetasks <- index
+// 		}
+// 	}
 
+// }
+
+// func (m *Master) timerForWorker(taskType, identify string) {
+// 	ticker := time.NewTicker(10 * time.Second)
+// 	defer ticker.Stop()
+// 	for {
+// 		select {
+// 		case <-ticker.C:
+// 			if taskType == "map" {
+// 				m.RWLock.Lock()
+// 				m.AllFilesName[identify] = UnAllocated
+// 				m.RWLock.Unlock()
+// 				maptasks <- identify
+// 			} else if taskType == "reduce" {
+// 				index, _ := strconv.Atoi(identify)
+// 				m.RWLock.Lock()
+// 				m.ReduceTaskStatus[index] = UnAllocated
+// 				m.RWLock.Unlock()
+// 				reducetasks <- index
+// 			}
+// 			return
+// 		default:
+// 			if taskType == "map" {
+// 				m.RWLock.RLock()
+// 				if m.AllFilesName[identify] == Finished {
+// 					m.RWLock.RUnlock()
+// 					return
+// 				} else {
+// 					m.RWLock.RUnlock()
+// 				}
+// 			} else if taskType == "reduce" {
+// 				index, _ := strconv.Atoi(identify)
+// 				m.RWLock.RLock()
+// 				if m.ReduceTaskStatus[index] == Finished {
+// 					m.RWLock.RUnlock()
+// 					return
+// 				} else {
+// 					m.RWLock.RUnlock()
+// 				}
+// 			}
+// 		}
+// 	}
+// }
 
 // MyInnerFileHandler : intermediate files' handler
 func (m *Master) MyInnerFileHandler(args *MyIntermediateFile, reply *MyReply) error {
-	nReduceNUm := args.NReduceType;
-	filename := args.MessageCnt;
+	nReduceNUm := args.NReduceType
+	filename := args.MessageCnt
 
 	m.InterFIlename[nReduceNUm] = append(m.InterFIlename[nReduceNUm], filename)
 	return nil
 }
-
-
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -160,19 +215,20 @@ func (m *Master) server() {
 
 // GenerateTask : create tasks
 func (m *Master) generateTask() {
-	for k,v := range m.AllFilesName {
+	for k, v := range m.AllFilesName {
 		if v == UnAllocated {
 			maptasks <- k
 		}
 	}
 	ok := false
 	for !ok {
+		time.Sleep(10 * time.Millisecond)
 		ok = checkAllMapTask(m)
 	}
-	
+
 	m.MapFinished = true
 
-	for k,v := range m.ReduceTaskStatus {
+	for k, v := range m.ReduceTaskStatus {
 		if v == UnAllocated {
 			reducetasks <- k
 		}
@@ -180,6 +236,7 @@ func (m *Master) generateTask() {
 
 	ok = false
 	for !ok {
+		time.Sleep(10 * time.Millisecond)
 		ok = checkAllReduceTask(m)
 	}
 	m.ReduceFinished = true
@@ -189,7 +246,7 @@ func (m *Master) generateTask() {
 func checkAllMapTask(m *Master) bool {
 	m.RWLock.RLock()
 	defer m.RWLock.RUnlock()
-	for _,v := range m.AllFilesName {
+	for _, v := range m.AllFilesName {
 		if v != Finished {
 			return false
 		}
@@ -234,11 +291,12 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m.ReduceTaskStatus = make(map[int]int)
 	m.InterFIlename = make([][]string, m.NReduce)
 	m.RWLock = new(sync.RWMutex)
-	for _,v := range files {
+	m.MutexLock = new(sync.Mutex)
+	for _, v := range files {
 		m.AllFilesName[v] = UnAllocated
 	}
-	
-	for i := 0; i<nReduce; i++ {
+
+	for i := 0; i < nReduce; i++ {
 		m.ReduceTaskStatus[i] = UnAllocated
 	}
 

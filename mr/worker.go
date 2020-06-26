@@ -1,15 +1,16 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-import "os"
-import "io/ioutil"
-import "strconv"
-import "encoding/json"
-import "sort"
-
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"sort"
+	"strconv"
+)
 
 // for sorting by key.
 type ByKey []KeyValue
@@ -18,7 +19,6 @@ type ByKey []KeyValue
 func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
-
 
 //
 // Map functions return a slice of KeyValue.
@@ -38,7 +38,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -46,14 +45,14 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	for(true) {
-		reply := CallForTask(MsgForTask,"")
-		if(reply.TaskType == "") {
+	for true {
+		reply := CallForTask(MsgForTask, "")
+		if reply.TaskType == "" {
 			break
 		}
-		switch(reply.TaskType) {
+		switch reply.TaskType {
 		case "map":
-			mapInWorker(&reply, mapf)	
+			mapInWorker(&reply, mapf)
 		case "reduce":
 			reduceInWorker(&reply, reducef)
 		}
@@ -62,7 +61,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 //
 // mapInWorker : workers do the map phase
-func mapInWorker(reply *MyReply,mapf func(string, string) []KeyValue) {
+func mapInWorker(reply *MyReply, mapf func(string, string) []KeyValue) {
 	file, err := os.Open(reply.Filename)
 	defer file.Close()
 	if err != nil {
@@ -78,7 +77,7 @@ func mapInWorker(reply *MyReply,mapf func(string, string) []KeyValue) {
 	// partition function. finish the partition task
 	kvas := Partition(kva, reply.NReduce)
 	// write to temp local file
-	for i := 0; i<reply.NReduce; i++ {
+	for i := 0; i < reply.NReduce; i++ {
 		filename := WriteToJSONFile(kvas[i], reply.MapNumAllocated, i)
 		_ = SendInterFiles(MsgForInterFileLoc, filename, i)
 	}
@@ -88,7 +87,7 @@ func mapInWorker(reply *MyReply,mapf func(string, string) []KeyValue) {
 // reduceInWroker : workers do the reduce phase
 func reduceInWorker(reply *MyReply, reducef func(string, []string) string) {
 	intermediate := []KeyValue{}
-	for _,v := range reply.ReduceFileList {
+	for _, v := range reply.ReduceFileList {
 		// fmt.Println(v)
 		file, err := os.Open(v)
 		defer file.Close()
@@ -105,12 +104,12 @@ func reduceInWorker(reply *MyReply, reducef func(string, []string) string) {
 		}
 	}
 	sort.Sort(ByKey(intermediate))
-	oname := "mr-out-"+strconv.Itoa(reply.ReduceNumAllocated)
+	oname := "mr-out-" + strconv.Itoa(reply.ReduceNumAllocated)
 	ofile, _ := os.Create(oname)
 
 	i := 0
 	for i < len(intermediate) {
-		j := i+1
+		j := i + 1
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 			j++
 		}
@@ -125,9 +124,8 @@ func reduceInWorker(reply *MyReply, reducef func(string, []string) string) {
 	_ = CallForTask(MsgForFinishReduce, strconv.Itoa(reply.ReduceNumAllocated))
 }
 
-
 // CallForTask : my RPC call function
-func CallForTask(msgType int,msgCnt string) MyReply {
+func CallForTask(msgType int, msgCnt string) MyReply {
 	args := MyArgs{}
 	args.MessageType = msgType
 	args.MessageCnt = msgCnt
@@ -137,7 +135,7 @@ func CallForTask(msgType int,msgCnt string) MyReply {
 	// call
 	res := call("Master.MyCallHandler", &args, &reply)
 	if !res {
-		return MyReply{TaskType:""}
+		return MyReply{TaskType: ""}
 	}
 	return reply
 }
@@ -177,31 +175,30 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	if(err.Error() != "unexpected EOF") {
-		fmt.Println("error: ",err)
+	if err.Error() != "unexpected EOF" {
+		fmt.Println("error: ", err)
 	}
 	return false
 }
 
 // WriteToJSONFile : write intermediate KeyValue pairs to a Json file
 func WriteToJSONFile(intermediate []KeyValue, mapTaskNum, reduceTaskNUm int) string {
-	filename := "mr-"+strconv.Itoa(mapTaskNum)+"-"+strconv.Itoa(reduceTaskNUm)
+	filename := "mr-" + strconv.Itoa(mapTaskNum) + "-" + strconv.Itoa(reduceTaskNUm)
 	jfile, _ := os.Create(filename)
 
 	enc := json.NewEncoder(jfile)
 	for _, kv := range intermediate {
 		err := enc.Encode(&kv)
-		if(err != nil) {
-			log.Fatal("error: ",err)
+		if err != nil {
+			log.Fatal("error: ", err)
 		}
 	}
 	return filename
 }
 
-
 // WriteToReduceOutput : write to final file
 func WriteToReduceOutput(key, values string, nReduce int) {
-	filename := "mr-out-"+strconv.Itoa(nReduce)
+	filename := "mr-out-" + strconv.Itoa(nReduce)
 	ofile, err := os.Open(filename)
 	if err != nil {
 		fmt.Println("no such file")
@@ -211,11 +208,10 @@ func WriteToReduceOutput(key, values string, nReduce int) {
 	fmt.Fprintf(ofile, "%v %v\n", key, values)
 }
 
-
 // Partition : divide intermedia keyvalue pairs into nReduce buckets
 func Partition(kva []KeyValue, nReduce int) [][]KeyValue {
-	kvas := make([][]KeyValue,nReduce)
-	for _,kv := range kva {
+	kvas := make([][]KeyValue, nReduce)
+	for _, kv := range kva {
 		v := ihash(kv.Key) % nReduce
 		kvas[v] = append(kvas[v], kv)
 	}
